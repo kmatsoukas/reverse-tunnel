@@ -36,6 +36,7 @@ func (sess Session) Start(ws *websocket.Conn) error {
 
 		for {
 			n, err := sess.conn.Read(buf)
+
 			if err != nil {
 				return err
 			}
@@ -52,6 +53,7 @@ func (sess Session) Start(ws *websocket.Conn) error {
 
 		for {
 			_, r, err := ws.NextReader()
+
 			if err != nil {
 				return err
 			}

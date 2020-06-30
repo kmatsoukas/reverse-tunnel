@@ -14,23 +14,44 @@ const connTimeout = 3 * time.Second
 
 // Binder implements service.Binder for UDP tunneling service.
 type Binder struct {
-	addr *net.UDPAddr
+	isInitialized bool
+	addr          *net.UDPAddr
+	wsPool        *service.WSPool
+	conn          *net.UDPConn
 }
 
 // Start binds to a UDP port and routes incoming packets to udp.Session objects.
-func (binder Binder) Start(ws *websocket.Conn, store *service.SessionStore) error {
-	conn, err := net.ListenUDP("udp", binder.addr)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
+func (binder *Binder) Start(ws *websocket.Conn, store *service.SessionStore) error {
+	if !binder.isInitialized {
+		var err error
+		binder.conn, err = net.ListenUDP("udp", binder.addr)
 
-	go service.Watch(ws, connTimeout, conn.Close)
+		if err != nil {
+			return err
+		}
+
+		binder.isInitialized = true
+	}
+
+	defer binder.conn.Close()
+
+	go service.Watch(ws, connTimeout, func() error {
+		binder.wsPool.Remove(ws)
+
+		if binder.wsPool.IsEmpty() {
+			binder.isInitialized = false
+
+			return binder.conn.Close()
+		} else {
+			return nil
+		}
+	})
 
 	buf := make([]byte, config.BufferSize)
 
 	for {
-		n, peer, err := conn.ReadFromUDP(buf)
+		n, peer, err := binder.conn.ReadFromUDP(buf)
+
 		if err != nil {
 			return err
 		}
@@ -38,14 +59,17 @@ func (binder Binder) Start(ws *websocket.Conn, store *service.SessionStore) erro
 		if sess, ok := store.Get(peer).(*Session); ok {
 			sess.SendToAgent(buf[:n])
 		} else {
-			sess := NewSession(conn, peer)
+			sess := NewSession(binder.conn, peer)
 			id := store.Add(sess)
 
-			err = ws.WriteJSON(service.BinderAcceptMessage{
+			nextWsSocket := binder.wsPool.Next()
+
+			err = nextWsSocket.WriteJSON(service.BinderAcceptMessage{
 				Event:       "accept",
 				SessionID:   id,
 				PeerAddress: peer.String(),
 			})
+
 			if err != nil {
 				return err
 			}

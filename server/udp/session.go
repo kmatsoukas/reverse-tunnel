@@ -50,6 +50,7 @@ func (sess *Session) SendToAgent(msg []byte) error {
 	atomic.StoreInt32(&sess.idle, 0)
 
 	ws := (*websocket.Conn)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&sess.tunnel))))
+
 	if ws == nil {
 		return ErrTunnelNotReady
 	}
@@ -89,10 +90,12 @@ func (sess *Session) Start(ws *websocket.Conn) error {
 
 		for {
 			n, err := r.Read(buf)
+
 			if err != nil {
 				if err == io.EOF {
 					break
 				}
+
 				return err
 			}
 

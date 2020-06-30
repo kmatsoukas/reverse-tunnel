@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 
@@ -20,11 +21,13 @@ var ErrInsufficientScope = errors.New("insufficient scope")
 // Service implements service.Service for TCP tunneling service.
 type Service struct {
 	authorities map[string]ports.Set
+	bindings    map[string]*Binder
 }
 
 // NewService creates a tcp.Service with given server configuration.
 func NewService(conf config.Server) Service {
 	auths := map[string]ports.Set{}
+	bindings := make(map[string]*Binder)
 
 	for _, agent := range conf.Agents {
 		set := ports.Set{}
@@ -38,13 +41,14 @@ func NewService(conf config.Server) Service {
 		auths[agent.AuthKey] = set
 	}
 
-	return Service{authorities: auths}
+	return Service{authorities: auths, bindings: bindings}
 }
 
 // GetBinder returns a tcp.Binder for an agent with given authorization key and
 // given TCP port.
-func (serv Service) GetBinder(key string, port int) (service.Binder, error) {
+func (serv *Service) GetBinder(key string, port int) (service.Binder, error) {
 	set, ok := serv.authorities[key]
+
 	if !ok {
 		return nil, ErrUnauthorizedKey
 	}
@@ -53,10 +57,22 @@ func (serv Service) GetBinder(key string, port int) (service.Binder, error) {
 		return nil, ErrInsufficientScope
 	}
 
+	bindKey := fmt.Sprintf("tcp/%d", port)
+
+	if binder, ok := serv.bindings[bindKey]; ok {
+		return binder, nil
+	}
+
 	addr, err := net.ResolveTCPAddr("tcp", ":"+strconv.Itoa(port))
+
 	if err != nil {
 		return nil, err
 	}
 
-	return &Binder{addr: addr}, nil
+	pool := service.NewWSPool()
+	binder := &Binder{addr: addr, isInitialized: false, wsPool: &pool}
+
+	serv.bindings[bindKey] = binder
+
+	return binder, nil
 }
